@@ -4,6 +4,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.HashMap;
 import java.util.Collections;
 import akka.actor.ActorRef;
@@ -32,12 +33,51 @@ public class NodeApp {
       }
     }
   
+  public static class FlushMessage implements Serializable{
+	  int senderID;
+	  int flushID;
+	  
+	  public FlushMessage(int senderID, int flushID) {
+		  this.senderID = senderID;
+		  this.flushID = flushID;
+	  }
+  }
+  
+  public static class DataMessage implements Serializable{
+	  int id;
+	  int senderID;
+	  int viewID;
+	  boolean stable;
+	  
+	  public DataMessage(int id, int senderID, int viewID) {
+		  this.id = id;
+		  this.senderID = senderID;
+		  this.stable = false;
+		  this.viewID = viewID;
+	  }
+	  
+	  public boolean isStable() {
+		  return stable;
+	  }
+	  
+	  public void setStable(boolean stable) {
+		  this.stable = stable;
+	  }	  
+  }
+  
   public static class Node extends AbstractActor {
   
-    // The table of all nodes in the system id->ref
-    private Map<Integer, ActorRef> nodes = new HashMap<>();
+    private Map<Integer, Map<Integer, ActorRef>> views = new HashMap<>();
     private String remotePath = null;
-    private int id;
+    private int id;	//process id
+    private boolean manager = false; //flag to know if it is the manager
+    private int countID = 0;	//used only by manager to handle unique process id
+    private boolean crashed = false;	//flag to simulate crash
+    private int viewID = 0;	//current view id
+    private double timeout = 2; //max time before timeout 
+    private double maxDelay = 1.8; //max time delay before sending new message
+    private boolean active = false; //flag if process can interact
+    private int inhibit = 0; //inhibit_sends counter
 
     /* -- Actor constructor --------------------------------------------------- */
     public Node(int id, String remotePath) {
@@ -53,22 +93,22 @@ public class NodeApp {
       if (this.remotePath != null) {
         getContext().actorSelection(remotePath).tell(new RequestNodelist(), getSelf());
       }
-      nodes.put(this.id, getSelf());
+      views.get(viewID).put(this.id, getSelf());
     }
 
     private void onRequestNodelist(RequestNodelist message) {
-        getSender().tell(new Nodelist(nodes), getSelf());
+        getSender().tell(new Nodelist(views.get(viewID)), getSelf());
     }
     private void onNodelist(Nodelist message) {
-      nodes.putAll(message.nodes);
-      for (ActorRef n: nodes.values()) {
+    	views.get(viewID).putAll(message.nodes);
+      for (ActorRef n: views.get(viewID).values()) {
         n.tell(new Join(this.id), getSelf());
       }
     }
     private void onJoin(Join message) {
       int id = message.id;
       System.out.println("Node " + id + " joined");
-      nodes.put(id, getSender());
+      views.get(viewID).put(id, getSender());
     }
 
     @Override
@@ -79,6 +119,82 @@ public class NodeApp {
         .match(Join.class, this::onJoin)
         .build();
     }
+
+	public boolean isManager() {
+		return manager;
+	}
+
+	public void setManager(boolean manager) {
+		this.manager = manager;
+	}
+
+	public int getCountID() {
+		return countID;
+	}
+
+	public void setCountID(int countID) {
+		this.countID = countID;
+	}
+	
+	public void increaseCountID(){
+		this.countID++;
+	}
+
+	public boolean isCrashed() {
+		return crashed;
+	}
+
+	public void setCrashed(boolean crashed) {
+		this.crashed = crashed;
+	}
+
+	public int getViewID() {
+		return viewID;
+	}
+
+	public void setViewID(int viewID) {
+		this.viewID = viewID;
+	}
+
+	public Map<Integer, Map<Integer, ActorRef>> getViews() {
+		return views;
+	}
+
+	public void setViews(Map<Integer, Map<Integer, ActorRef>> views) {
+		this.views = views;
+	}
+	
+	public void addView(Map<Integer, ActorRef> view, int viewID) {
+		this.views.put(viewID, view);
+	}
+	
+	public void removeView(int viewID) {
+		this.views.remove(viewID);
+	}
+	
+	public List<Integer> intersectionNodes(int flushID){
+		List<Integer> ids = new ArrayList<>();
+		for(Entry<Integer, Map<Integer, ActorRef>> view : views.entrySet()) {
+			if(view.getKey() > viewID && view.getKey() <= flushID) {
+				for(Entry<Integer, ActorRef> process : view.getValue().entrySet()) {
+					ids.add(process.getKey());
+				}
+			}
+		}
+		int max = flushID - viewID;
+		List<Integer> uniqueIDs = new ArrayList<>();
+		for(Integer id : ids) {
+			int count = Collections.frequency(ids, id);
+			if(count == max){
+				if(!uniqueIDs.contains(id))
+				{
+					uniqueIDs.add(id);
+				}
+			}
+		}
+		
+		return uniqueIDs;
+	}
   }
   
   public static void main(String[] args) {
