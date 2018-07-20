@@ -11,20 +11,23 @@ import akka.actor.ActorRef;
 import akka.actor.AbstractActor;
 import akka.actor.ActorSystem;
 import akka.actor.Props;
+import akka.util.Timeout;
 import akka.actor.Cancellable;
 import scala.concurrent.duration.Duration;
+import scala.concurrent.duration.FiniteDuration;
+
 import com.typesafe.config.ConfigFactory;
 import com.typesafe.config.Config;
 
 public class NodeApp {
   static private String remotePath = null; // Akka path of the bootstrapping peer
 
-  public static class Join implements Serializable {
+  /*public static class Join implements Serializable {
     int id;
     public Join(int id) {
       this.id = id;
     }
-  }
+  }*/
   public static class RequestNodelist implements Serializable {}
   public static class Nodelist implements Serializable {
     Map<Integer, ActorRef> nodes;
@@ -32,6 +35,62 @@ public class NodeApp {
       this.nodes = Collections.unmodifiableMap(new HashMap<Integer, ActorRef>(nodes)); 
       }
     }
+  
+  public static class RequestJoin implements Serializable{
+	  ActorRef sender;
+	  public RequestJoin(ActorRef sender) {
+		  this.sender = sender;
+	  }
+  }
+  
+  public static class ViewChange implements Serializable{
+	  int viewID;
+	  Map<Integer, ActorRef> nodes;
+	  ActorRef lastNode;
+	  int lastNodeID;
+	  
+	  public ViewChange(int viewID, Map<Integer, ActorRef> nodes, ActorRef lastNode, int lastNodeID) {
+		  this.viewID = viewID;
+		  this.nodes = nodes;
+		  this.lastNode = lastNode;
+		  this.lastNodeID = lastNodeID;
+	  }
+	public int getViewID() {
+		return viewID;
+	}
+	public void setViewID(int viewID) {
+		this.viewID = viewID;
+	}
+	public Map<Integer, ActorRef> getNodes() {
+		return nodes;
+	}
+	public void setNodes(Map<Integer, ActorRef> nodes) {
+		this.nodes = nodes;
+	}
+	public ActorRef getLastNode() {
+		return lastNode;
+	}
+	public void setLastNode(ActorRef lastNode) {
+		this.lastNode = lastNode;
+	}
+	public int getLastNodeID() {
+		return lastNodeID;
+	}
+	public void setLastNodeID(int lastNodeID) {
+		this.lastNodeID = lastNodeID;
+	}
+  }
+  
+  public static class AcceptedJoin implements Serializable{
+	  int nodeID;
+	  int viewID;
+	  Map<Integer, ActorRef> nodes;
+	  public AcceptedJoin(int nodeID, int viewID, Map<Integer, ActorRef> nodes) {
+		  this.nodeID = nodeID;
+		  this.viewID = viewID;
+		  this.nodes = nodes;
+	  }
+  }
   
   public static class FlushMessage implements Serializable{
 	  int senderID;
@@ -65,6 +124,43 @@ public class NodeApp {
 	  }	  
   }
   
+  public static class HeartbeatMessage implements Serializable{
+	  /*int senderID;
+	  public HeartbeatMessage(int senderID) {
+		  this.senderID = senderID;
+	  }
+	  
+	  public int getSenderID() {
+		  return senderID;
+	  }*/
+	  public HeartbeatMessage() {}
+  }
+  
+  public static class IDMessage implements Serializable{
+	  
+  }
+  
+  public static class TimeoutMessage implements Serializable{
+	  int nodeID;
+	  ActorRef node;
+	  public TimeoutMessage(int nodeID, ActorRef node){
+		  this.nodeID = nodeID;
+		  this.node = node;
+	  }
+  }
+  
+  public static class TimerNode implements Serializable{
+	  
+	  ActorRef node;
+	  int nodeID;
+	  Cancellable cancellable;
+	  public TimerNode(ActorRef node, int nodeID, Cancellable cancellable) {
+		  this.node = node;
+		  this.nodeID = nodeID;
+		  this.cancellable = cancellable;
+	  }
+  }
+  
   public static class Node extends AbstractActor {
   
     private Map<Integer, Map<Integer, ActorRef>> views = new HashMap<>();
@@ -75,9 +171,11 @@ public class NodeApp {
     private boolean crashed = false;	//flag to simulate crash
     private int viewID = 0;	//current view id
     private double timeout = 2; //max time before timeout 
-    private double maxDelay = 1.8; //max time delay before sending new message
+    private double maxDelay = 0.2; //max time delay before sending new message
     private boolean active = false; //flag if process can interact
     private int inhibit = 0; //inhibit_sends counter
+    private double hearttimer = 0.5; //heartbeat timer
+    private Map<Integer, TimerNode> timerNodes;
 
     /* -- Actor constructor --------------------------------------------------- */
     public Node(int id, String remotePath) {
@@ -85,18 +183,102 @@ public class NodeApp {
       this.remotePath = remotePath;
     }
 
-    static public Props props(int id, String remotePath) {
+    public static Props props(int id, String remotePath) {
       return Props.create(Node.class, () -> new Node(id, remotePath));
     }
 
     public void preStart() {
       if (this.remotePath != null) {
-        getContext().actorSelection(remotePath).tell(new RequestNodelist(), getSelf());
+    	  if(this.id==0) {
+    		  setManager(true);
+    		  this.active = true;
+    	  }
+    	  else
+    		  getContext().actorSelection(remotePath).tell(new RequestJoin(getSelf()), getSelf());
       }
-      views.get(viewID).put(this.id, getSelf());
+      //views.get(viewID).put(this.id, getSelf());
     }
 
-    private void onRequestNodelist(RequestNodelist message) {
+    private void onRequestJoin(RequestJoin message) {
+    	increaseCountID();
+    	int newNodeID = getCountID();
+    	increaseViewID();
+    	
+    	Map<Integer, ActorRef> newView = views.get(getViewID()-1);
+    	newView.put(newNodeID, message.sender);
+    	
+    	for(ActorRef n: views.get(getViewID()-1).values()) {
+    		n.tell(new ViewChange(getViewID(), views.get(getViewID()), message.sender, newNodeID), getSelf() );
+    	}
+    }
+    
+    private void onViewChange(ViewChange message) {
+    	if(active) {
+	    	//FLUSH
+	    	inhibit++;
+	    	
+	    	
+    	}
+    	//FINITO FLUSH
+    	//mando active al nuovo arrivato
+    	if(manager) {
+    		if(message.getLastNode()!=null)
+    			message.getLastNode().tell(new AcceptedJoin(message.getLastNodeID(), message.getViewID(), message.getNodes()), getSender());
+    		//start timer to know if heartbeat crash
+    		initTimerNodes(timeout, message.getNodes());
+    	}
+    }
+    
+
+    private void onJoin(AcceptedJoin message) {
+      this.id = message.nodeID;
+      this.viewID = message.viewID;
+      this.views.put(this.viewID, message.nodes);
+      this.active = true;
+      System.out.println("Node " + id + " joined");
+      //start heartbeat from node to manager
+      setTimerHeartbeat(hearttimer);
+    }
+    
+    //manager timeout heartbeat
+    private void addTimerNode(int nodeID, ActorRef node, double time) {
+    	ActorRef managerRef = getContext().actorFor(remotePath);
+    	Cancellable cancellable = getContext().system().scheduler().scheduleOnce(
+    			 (FiniteDuration) Duration.create(time, TimeUnit.MILLISECONDS), managerRef, new TimeoutMessage(nodeID, node),
+    			 getContext().system().dispatcher(), getSelf());
+    	TimerNode tn = new TimerNode(node, nodeID, cancellable);
+    	timerNodes.put(nodeID, tn);
+    }
+    
+    private void restartTimerNodes(int nodeID, ActorRef node, double time) {
+    	timerNodes.get(nodeID).cancellable.cancel();
+    	timerNodes.remove(nodeID);
+    	addTimerNode(nodeID, node, time);
+    }
+    
+    private void initTimerNodes(double time, Map<Integer, ActorRef> nodes) {
+    	for(TimerNode tn : timerNodes.values()) {
+    		tn.cancellable.cancel();
+    		timerNodes.remove(tn);
+    	}
+    	for(Entry<Integer, ActorRef> node : nodes.entrySet()) {
+    		addTimerNode(node.getKey(), node.getValue(), time);
+    	}
+    }
+    
+    //node hearthbeat timer
+    void setTimerHeartbeat(double time) {
+    	ActorRef managerRef = getContext().actorFor(remotePath);
+    	Cancellable cancellable = getContext().system().scheduler().schedule(Duration.Zero(),
+    			 (FiniteDuration) Duration.create(time, TimeUnit.MILLISECONDS), managerRef, new HeartbeatMessage(),
+    			 getContext().system().dispatcher(), getSelf());
+    }
+    
+    void delay(int d) {
+        try {Thread.sleep(d);} catch (Exception e) {}
+      }
+    
+    /*private void onRequestNodelist(RequestNodelist message) {
         getSender().tell(new Nodelist(views.get(viewID)), getSelf());
     }
     private void onNodelist(Nodelist message) {
@@ -104,20 +286,39 @@ public class NodeApp {
       for (ActorRef n: views.get(viewID).values()) {
         n.tell(new Join(this.id), getSelf());
       }
-    }
-    private void onJoin(Join message) {
-      int id = message.id;
-      System.out.println("Node " + id + " joined");
-      views.get(viewID).put(id, getSender());
+    }*/
+    
+    //manager receive heartbeat
+    private void onHeartbeat(HeartbeatMessage message){
+    	for(Entry<Integer, ActorRef> entry : views.get(viewID).entrySet()) {
+    		if(entry.getValue().equals(getSender())) {
+    			restartTimerNodes(entry.getKey(), entry.getValue(), hearttimer);
+    		}
+    	}
     }
 
     @Override
     public Receive createReceive() {
-      return receiveBuilder()
-        .match(RequestNodelist.class, this::onRequestNodelist)
-        .match(Nodelist.class, this::onNodelist)
-        .match(Join.class, this::onJoin)
-        .build();
+    	if(manager) {
+	      return receiveBuilder()
+  	        .match(RequestJoin.class, this::onRequestJoin)
+	        .match(ViewChange.class, this::onViewChange)
+	        .match(HeartbeatMessage.class, this::onHeartbeat)
+	        //.match(RequestNodelist.class, this::onRequestNodelist)
+	        //.match(Nodelist.class, this::onNodelist)
+	        //.match(Join.class, this::onJoin)
+	        .build();
+    	}
+    	else {
+		  return receiveBuilder()
+	        //.match(RequestJoin.class, this::onRequestJoin)
+	        .match(ViewChange.class, this::onViewChange)
+	        .match(AcceptedJoin.class, this::onJoin)
+	        //.match(RequestNodelist.class, this::onRequestNodelist)
+	        //.match(Nodelist.class, this::onNodelist)
+	        //.match(Join.class, this::onJoin)
+	        .build();
+    	}
     }
 
 	public boolean isManager() {
@@ -154,6 +355,9 @@ public class NodeApp {
 
 	public void setViewID(int viewID) {
 		this.viewID = viewID;
+	}
+	public void increaseViewID() {
+		this.viewID++;
 	}
 
 	public Map<Integer, Map<Integer, ActorRef>> getViews() {
@@ -217,11 +421,12 @@ public class NodeApp {
   }
   // Create the actor system
   final ActorSystem system = ActorSystem.create("mysystem", config);
-
+  
   // Create a single node actor locally
   final ActorRef receiver = system.actorOf(
       Node.props(myId, remotePath),
       "node"      // actor name
       );
+  
   }
 }
