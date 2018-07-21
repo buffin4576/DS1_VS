@@ -96,10 +96,12 @@ public class NodeApp {
   public static class FlushMessage implements Serializable{
 	  int senderID;
 	  int flushID;
+	  Map<Integer, ActorRef> view;
 	  
-	  public FlushMessage(int senderID, int flushID) {
+	  public FlushMessage(int senderID, int flushID, Map<Integer, ActorRef> view) {
 		  this.senderID = senderID;
 		  this.flushID = flushID;
+		  this.view = view;
 	  }
   }
   
@@ -126,15 +128,14 @@ public class NodeApp {
   }
   
   public static class HeartbeatMessage implements Serializable{
-	  /*int senderID;
+	  int senderID;
 	  public HeartbeatMessage(int senderID) {
 		  this.senderID = senderID;
 	  }
 	  
 	  public int getSenderID() {
 		  return senderID;
-	  }*/
-	  public HeartbeatMessage() {}
+	  }
   }
   
   public static class IDMessage implements Serializable{
@@ -172,15 +173,15 @@ public class NodeApp {
     private boolean crashed = false;	//flag to simulate crash
     private int viewID = 0;	//current view id
     private double timeout = 2000; //max time before timeout 
-    private int maxDelay = 1000; //max time delay before sending new message
+    private int maxDelay = 10; //max time delay before sending new message
     private boolean active = false; //flag if process can interact
     private int inhibit = 0; //inhibit_sends counter
-    private double hearttimer = 0.5; //heartbeat timer
-    private Map<Integer, TimerNode> timerNodes;
-    private Map<Integer, DataMessage> receivedMessages;
-    private Map<Integer, DataMessage> deleteMessages;
+    private double hearttimer = 500; //heartbeat timer
+    private Map<Integer, TimerNode> timerNodes = new HashMap<>();
+    private Map<Integer, DataMessage> receivedMessages = new HashMap<>();
+    private Map<Integer, DataMessage> deleteMessages = new HashMap<>();
     private int messageCounter = 0;
-    private int messageTimer = 100;
+    private int messageTimer = 700;
 
     /* -- Actor constructor --------------------------------------------------- */
     public Node(int id, String remotePath) {
@@ -199,30 +200,44 @@ public class NodeApp {
     	  if(this.id==0) {
     		  setManager(true);
     		  this.active = true;
+    		  Map<Integer, ActorRef> initNode = new HashMap<>();
+    		  initNode.put(this.id, getSelf());
+    		  views.put(viewID, initNode);
+    		  System.out.println("VIEW_ID "+this.viewID+" COUNT VIEWS "+views.size());
+    		  setTimerData();
     	  }
     	  else {
-    		  System.out.println("NEW JOIN REQUEST FROM "+this.id);
-    		  getContext().actorSelection(remotePath).tell(new RequestJoin(getSelf()), getSelf());
+    		  if(!active) {
+	    		  System.out.println("NEW JOIN REQUEST FROM "+this.id);
+	    		  getContext().actorSelection(remotePath).tell(new RequestJoin(getSelf()), getSelf());
+    		  }
     	  }
 	  }
       //views.get(viewID).put(this.id, getSelf());
     }
 
     private void onRequestJoin(RequestJoin message) {
-    	System.out.println("PRE RECIEVED REQUEST JOIN FROM "+getSender());
-    	System.out.println("Manager: "+manager);
+    	//System.out.println("PRE RECIEVED REQUEST JOIN FROM "+getSender());
+    	//System.out.println("Manager: "+manager);
     	if(manager) {
     		System.out.println("RECIEVED REQUEST JOIN FROM "+getSender());
 	    	increaseCountID();
 	    	int newNodeID = getCountID();
-	    	increaseViewID();
+	    	//increaseViewID();//increase in una secondaria?
 	    	
-	    	Map<Integer, ActorRef> newView = views.get(getViewID()-1);
-	    	newView.put(newNodeID, message.sender);
-	    	
-	    	for(ActorRef n: views.get(getViewID()-1).values()) {
-	    		n.tell(new ViewChange(getViewID(), views.get(getViewID()), message.sender, newNodeID), getSelf() );
-	    	}
+	    	Map<Integer, ActorRef> newView = views.get(getViewID());
+	    	//System.out.println("newView "+newView==null);
+	    	//System.out.println("VIEW ID "+(getViewID()-1)+" SIZE"+views.get(getViewID()-1));
+	    	//System.out.println("NEW VIEW ID "+getViewID()+" SIZE"+newView.size());
+	    	newView.put(newNodeID, getSender());
+
+	    	//System.out.println("VIEWS: "+views.size()+" VIEW ID: "+(getViewID()-1));
+	    	//System.out.println("VIEWS: "+views.size()+" VIEW ID: "+(getViewID()-1)+" SIZE "+views.get(getViewID()-1).size());
+	    	for(ActorRef n: views.get(getViewID()).values()) {
+	    		//System.out.println(n.toString());
+	    		//check se corretto n.tell(new ViewChange(getViewID(), views.get(getViewID()), message.sender, newNodeID), getSelf() );
+	    		n.tell(new ViewChange(getViewID()+1, newView, message.sender, newNodeID), getSelf() );
+		    }
     	}
     }
     
@@ -231,6 +246,7 @@ public class NodeApp {
 	    	//FLUSH
 	    	inhibit++;
 	    	for(DataMessage dm : receivedMessages.values()) {
+	    		//System.out.println("MULTICAST FOR "+message.nodes.size());
 	    		multicast(dm, message.getNodes());
 	    		
 	    		//deliver and delete
@@ -239,17 +255,24 @@ public class NodeApp {
 	    		deleteMessages.put(dm.id, dm);
 	    		receivedMessages.remove(dm.id);
 	    	}
-	    	multicast(new FlushMessage(this.id,message.getViewID()), message.getNodes());
+	    	//System.out.println("MULTICAST NODES "+(message.nodes==null));
+	    	//System.out.println("MULTICAST FOR "+message.nodes.size());
+	    	//System.out.println("MULTICAST FLUSH ID VIEW "+message.getViewID());
+	    	//System.out.println("MULTICAST FROM "+this.id);
+	    	multicast(new FlushMessage(this.id,message.getViewID(),message.nodes), message.getNodes());
 	    	//intersect
 	    	//flush
     	}
     	//FINITO FLUSH
     	//mando active al nuovo arrivato
     	if(manager) {
-    		if(message.getLastNode()!=null)
+    		if(message.getLastNode()!=null) {
     			message.getLastNode().tell(new AcceptedJoin(message.getLastNodeID(), message.getViewID(), message.getNodes()), getSender());
-    		//start timer to know if heartbeat crash
-    		initTimerNodes(timeout, message.getNodes());
+    			initTimerNodes(timeout, message.getLastNodeID(),message.getLastNode());
+    		}
+			//start timer to know if heartbeat crash
+    		//initTimerNodes(timeout, message.getNodes());
+    		
     	}
     }
     
@@ -261,9 +284,9 @@ public class NodeApp {
     
     private void onJoin(AcceptedJoin message) {
       this.id = message.nodeID;
-      this.viewID = message.viewID;
-      this.views.put(this.viewID, message.nodes);
-      this.active = true;
+      //this.viewID = message.viewID;
+      //this.views.put(this.viewID, message.nodes);
+      //this.active = true;
       System.out.println("Node " + id + " joined");
       //start heartbeat from node to manager
       setTimerHeartbeat(hearttimer);
@@ -272,10 +295,12 @@ public class NodeApp {
     
     //manager timeout heartbeat
     private void addTimerNode(int nodeID, ActorRef node, double time) {
-    	ActorRef managerRef = getContext().actorFor(remotePath);
+    	ActorRef managerRef = getContext().actorSelection(remotePath).anchor();
+    	
     	Cancellable cancellable = getContext().system().scheduler().scheduleOnce(
     			 (FiniteDuration) Duration.create(time, TimeUnit.MILLISECONDS), managerRef, new TimeoutMessage(nodeID, node),
-    			 getContext().system().dispatcher(), getSelf());
+    			 getContext().system().dispatcher(), managerRef);
+    	//System.out.println("HEARTBEAT TIMER CREATED FOR NODE "+nodeID);
     	TimerNode tn = new TimerNode(node, nodeID, cancellable);
     	timerNodes.put(nodeID, tn);
     }
@@ -286,22 +311,24 @@ public class NodeApp {
     	addTimerNode(nodeID, node, time);
     }
     
-    private void initTimerNodes(double time, Map<Integer, ActorRef> nodes) {
-    	for(TimerNode tn : timerNodes.values()) {
-    		tn.cancellable.cancel();
-    		timerNodes.remove(tn);
-    	}
-    	for(Entry<Integer, ActorRef> node : nodes.entrySet()) {
-    		addTimerNode(node.getKey(), node.getValue(), time);
-    	}
+    //private void initTimerNodes(double time, Map<Integer, ActorRef> nodes) {
+	private void initTimerNodes(double time, int nodeID, ActorRef node) {
+    	addTimerNode(nodeID, node, time);
     }
     
+	Cancellable heartCancellable = null;
     //node hearthbeat timer
     void setTimerHeartbeat(double time) {
-    	ActorRef managerRef = getContext().actorFor(remotePath);
-    	Cancellable cancellable = getContext().system().scheduler().schedule(Duration.Zero(),
-    			 (FiniteDuration) Duration.create(time, TimeUnit.MILLISECONDS), managerRef, new HeartbeatMessage(),
+    	//ActorRef managerRef = getContext().actorFor(remotePath);
+    	ActorRef managerRef = getContext().actorSelection(remotePath).anchor();
+//    	if(messageCounter>10 && id==2) {
+//    		active=false;heartCancellable.cancel();
+//    		}else
+//    	{
+    		heartCancellable = getContext().system().scheduler().schedule(Duration.Zero(),
+    			 (FiniteDuration) Duration.create(time, TimeUnit.MILLISECONDS), managerRef, new HeartbeatMessage(this.id),
     			 getContext().system().dispatcher(), getSelf());
+//    	}
     }
     
     void delay(int d) {
@@ -310,102 +337,144 @@ public class NodeApp {
     
     //manager receive heartbeat
     private void onHeartbeat(HeartbeatMessage message){
-    	for(Entry<Integer, ActorRef> entry : views.get(viewID).entrySet()) {
-    		if(entry.getValue().equals(getSender())) {
-    			restartTimerNodes(entry.getKey(), entry.getValue(), hearttimer);
-    		}
-    	}
+    	//System.out.println("HEARTBEAT FROM "+message.senderID);
+    	try {
+	    	/*for(Entry<Integer, ActorRef> entry : views.get(viewID).entrySet()) {
+	    		if(entry.getValue().equals(getSender())) {
+	    			restartTimerNodes(entry.getKey(), entry.getValue(), hearttimer);
+	    		}
+	    	}*/
+    		ActorRef a = views.get(viewID).get(message.senderID);
+    		restartTimerNodes(message.senderID, a, hearttimer);
+    	}catch(Exception ex) {}
+    	
     }
     
     private void onReceiveMessage(DataMessage message) {
     	delay(maxDelay);
-    	
-    	if(message.viewID==this.viewID) {
-    		if(deleteMessages.containsKey(message.senderID)) {
-	    		if(!(deleteMessages.get(message.senderID).id==message.id)) {
-		    		if(receivedMessages.containsKey(message.senderID)) {
+    	//System.out.println("INHIBIT: "+inhibit + " VIEWID: "+viewID);
+    	//System.out.println(this.id+" RECEIVED DATAMESSAGE "+message.id +" VIEW "+message.viewID+" FROM "+message.senderID);
+    	if(active) {
+	    	if(message.viewID==this.viewID) {
+	    		if(deleteMessages.containsKey(message.senderID)) {
+		    		if(!(deleteMessages.get(message.senderID).id==message.id)) {
+			    		if(receivedMessages.containsKey(message.senderID)) {
+			        		//stable older message
+			    			DataMessage older = receivedMessages.get(message.senderID);
+			    			if(message.id > older.id ){
+			    				receivedMessages.remove(message.senderID);
+			    				//PRINT delivery
+	
+			    	    		System.out.println(id+" deliver multicast "+ older.id+ " from "+older.senderID+" within "+ older.viewID);
+			        		}
+			        	}
+			        	receivedMessages.put(message.senderID, message);
+		        	}
+	    		}else {
+	    			if(receivedMessages.containsKey(message.senderID)) {
 		        		//stable older message
 		    			DataMessage older = receivedMessages.get(message.senderID);
 		    			if(message.id > older.id ){
 		    				receivedMessages.remove(message.senderID);
 		    				//PRINT delivery
-
+	
 		    	    		System.out.println(id+" deliver multicast "+ older.id+ " from "+older.senderID+" within "+ older.viewID);
 		        		}
 		        	}
 		        	receivedMessages.put(message.senderID, message);
-	        	}
-    		}else {
-    			if(receivedMessages.containsKey(message.senderID)) {
+	    		}
+	    	}
+	    	if(message.viewID>this.viewID) {
+	    		if(receivedMessages.containsKey(message.senderID)) {
 	        		//stable older message
 	    			DataMessage older = receivedMessages.get(message.senderID);
 	    			if(message.id > older.id ){
 	    				receivedMessages.remove(message.senderID);
 	    				//PRINT delivery
-
-	    	    		System.out.println(id+" deliver multicast "+ older.id+ " from "+older.senderID+" within "+ older.viewID);
+	    				System.out.println(id+" deliver multicast "+ older.id+ " from "+older.senderID+" within "+ older.viewID);
 	        		}
 	        	}
 	        	receivedMessages.put(message.senderID, message);
-    		}
+	    	}
     	}
-    	if(message.viewID>this.viewID) {
-    		if(receivedMessages.containsKey(message.senderID)) {
-        		//stable older message
-    			DataMessage older = receivedMessages.get(message.senderID);
-    			if(message.id > older.id ){
-    				receivedMessages.remove(message.senderID);
-    				//PRINT delivery
-    				System.out.println(id+" deliver multicast "+ older.id+ " from "+older.senderID+" within "+ older.viewID);
-        		}
-        	}
-        	receivedMessages.put(message.senderID, message);
-    	}	
     }
     
-    private Map<Integer, Map<Integer, ActorRef>> flushes;
+    private Map<Integer, Map<Integer, ActorRef>> flushes = new HashMap<>();
     
     private void onFlushMessage(FlushMessage message) {
     	delay(maxDelay);
-    	
-    	Map<Integer, ActorRef> singleIntersect = flushes.get(message.flushID);
-    	singleIntersect.put(message.senderID, getSender());
-    	List<Integer> intersectedID = intersectionNodes(message.flushID);
-    	boolean checked = true;
-    	for(Integer i : intersectedID) {
-    		if(!singleIntersect.containsKey(i))
-    			checked = false;
-    	}
-    	if(checked) {
-    		while(this.viewID<message.flushID) {
-    			this.inhibit--;
-    			this.viewID++;
+    	System.out.println("FLUSH: "+message.flushID);
+    	//delay(10000);
+    	//if(active) {
+	    	Map<Integer, ActorRef> singleIntersect = flushes.get(message.flushID);
+	    	if(singleIntersect==null)
+	    		singleIntersect = new HashMap<>();
+	    	singleIntersect.put(message.senderID, getSender());
+	    	List<Integer> intersectedID = intersectionNodes(message.flushID);
+	    	boolean checked = true;
+	    	for(Integer i : intersectedID) {
+	    		if(!singleIntersect.containsKey(i))
+	    			checked = false;
+	    	}
+	    	System.out.println("FLUSH CHECKED "+checked);
+	    	if(checked) {
 
-	    		System.out.println(id+" install view "+ this.viewID + " listprocesses");
-    		}
-    		for(Entry<Integer, DataMessage> entry : receivedMessages.entrySet()) {
-    			if(entry.getValue().viewID<this.viewID) {
-    				//PRINT deliver
-    				receivedMessages.remove(entry.getKey());
-    			}
-    		}
-    		//remove deletedMessages
-    		for(Entry<Integer, DataMessage> entry : deleteMessages.entrySet()) {
-    			if(entry.getValue().viewID<this.viewID) {
-    				deleteMessages.remove(entry.getKey());
-    			}
-    		}
-    	}
-    	
+    			System.out.println("Inhibit "+inhibit + " viewID: "+viewID);
+				views.put(message.flushID, message.view);
+				if(inhibit==0) {// solo il nuovo processo ha inhibit = 0 gli altri no
+					this.viewID = message.flushID;
+					System.out.println(id+" install view "+ this.viewID + " listprocesses");
+					this.active = true;
+				}
+				else {
+		    		while(this.viewID<message.flushID) {
+		    			this.inhibit--;
+		    			this.viewID++;
+		    			//views.put(message.flushID, message.view);
+		    			//check install view?
+		    			//System.out.println("Inhibit "+inhibit);
+			    		System.out.println(id+" install view "+ this.viewID + " listprocesses");
+		    		}
+		    		for(Entry<Integer, DataMessage> entry : receivedMessages.entrySet()) {
+		    			if(entry.getValue().viewID<this.viewID) {
+		    				//PRINT deliver
+		    				//receivedMessages.remove(entry.getKey());
+		    			}
+		    		}
+		    		//remove deletedMessages
+		    		for(Entry<Integer, DataMessage> entry : deleteMessages.entrySet()) {
+		    			if(entry.getValue().viewID<this.viewID) {
+		    				//deleteMessages.remove(entry.getKey());
+		    			}
+		    		}
+				}
+	    		
+	    		/*if(manager) {
+	        		if(message.getLastNode()!=null) {
+	        			message.getLastNode().tell(new AcceptedJoin(message.getLastNodeID(), message.getViewID(), message.getNodes()), getSender());
+	        			
+	        		}
+	    			//start timer to know if heartbeat crash
+	        		initTimerNodes(timeout, message.getNodes());
+	        	}*/
+	    	}
+    	//}
     }
 
   //node DataMessage timer
     void setTimerData() {
-    	getContext().system().scheduler().scheduleOnce(Duration.create(messageTimer, TimeUnit.MILLISECONDS),
+    	System.out.println("TIMER DATA "+this.id);
+    	getContext().system().scheduler().schedule(Duration.create(0, TimeUnit.MILLISECONDS),Duration.create(messageTimer, TimeUnit.MILLISECONDS),
     			  new Runnable() {
     			    @Override
     			    public void run() {
+    			    	//System.out.println("Inhibit " + inhibit+ " active "+active);
+    			    	System.out.println(id+" VIEW: "+viewID);
+    			    	if(messageCounter>10 && id==2) {
+    			    		active=false;heartCancellable.cancel();
+    			    		}
     			    	if(inhibit==0 && active) {
+    			    		//System.out.println(id+" VIEW: "+viewID);
 	    			    	messageCounter++;
 	    			    	multicast(new DataMessage(messageCounter, id, viewID),views.get(viewID));
 	    			    	System.out.println(id+" send multicast "+ messageCounter +" within "+ viewID);
@@ -416,9 +485,12 @@ public class NodeApp {
     
     private void onTimeout(TimeoutMessage message) {
     	if(manager) {
+    		timerNodes.get(message.nodeID).cancellable.cancel();
+	    	timerNodes.remove(message.nodeID);
+    		System.out.println("TIMEOUT "+message.nodeID);
 	    	Map<Integer, ActorRef> newView = views.get(viewID);
 	    	newView.remove(message.nodeID);
-	    	
+
 	    	multicast(new ViewChange(viewID+1,newView,null,-1),newView);
     	}
     }
@@ -449,6 +521,7 @@ public class NodeApp {
   	        .match(TimeoutMessage.class, this::onTimeout)
 	        .match(ViewChange.class, this::onViewChange)
 	        .match(HeartbeatMessage.class, this::onHeartbeat)
+	        .match(AcceptedJoin.class, this::onJoin)
 	        //on timeout-> view change con last = null
 	        .match(FlushMessage.class, this::onFlushMessage)
 	        .match(DataMessage.class, this::onReceiveMessage)
