@@ -193,19 +193,26 @@ public class NodeApp {
     }
 
     public void preStart() {
+    	System.out.println("ID: "+this.id);
+    	System.out.println("Remote path: "+this.remotePath);
       if (this.remotePath != null) {
     	  if(this.id==0) {
     		  setManager(true);
     		  this.active = true;
     	  }
-    	  else
+    	  else {
+    		  System.out.println("NEW JOIN REQUEST FROM "+this.id);
     		  getContext().actorSelection(remotePath).tell(new RequestJoin(getSelf()), getSelf());
-      }
+    	  }
+	  }
       //views.get(viewID).put(this.id, getSelf());
     }
 
     private void onRequestJoin(RequestJoin message) {
+    	System.out.println("PRE RECIEVED REQUEST JOIN FROM "+getSender());
+    	System.out.println("Manager: "+manager);
     	if(manager) {
+    		System.out.println("RECIEVED REQUEST JOIN FROM "+getSender());
 	    	increaseCountID();
 	    	int newNodeID = getCountID();
 	    	increaseViewID();
