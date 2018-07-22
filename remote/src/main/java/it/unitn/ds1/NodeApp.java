@@ -172,11 +172,11 @@ public class NodeApp {
     private int countID = 0;	//used only by manager to handle unique process id
     private boolean crashed = false;	//flag to simulate crash
     private int viewID = 0;	//current view id
-    private double timeout = 2000; //max time before timeout 
+    private double timeout = 4000; //max time before timeout 
     private int maxDelay = 10; //max time delay before sending new message
     private boolean active = false; //flag if process can interact
     private int inhibit = 0; //inhibit_sends counter
-    private double hearttimer = 500; //heartbeat timer
+    private double hearttimer = 100; //heartbeat timer
     private Map<Integer, TimerNode> timerNodes = new HashMap<>();
     private Map<Integer, DataMessage> receivedMessages = new HashMap<>();
     private Map<Integer, DataMessage> deleteMessages = new HashMap<>();
@@ -243,6 +243,7 @@ public class NodeApp {
     
     private void onViewChange(ViewChange message) {
     	if(active) {
+    		System.out.println("VIEW CHANGE "+message.viewID);
 	    	//FLUSH
 	    	inhibit++;
 	    	for(DataMessage dm : receivedMessages.values()) {
@@ -278,7 +279,9 @@ public class NodeApp {
     
     private void multicast(Serializable message, Map<Integer, ActorRef> nodes){
     	for(ActorRef process :nodes.values()) {
-    		process.tell(message, getSelf());
+    		try {
+    		process.tell(message, getSelf());}
+    		catch(Exception ex) {}
     	}
     }
     
@@ -295,14 +298,44 @@ public class NodeApp {
     
     //manager timeout heartbeat
     private void addTimerNode(int nodeID, ActorRef node, double time) {
-    	ActorRef managerRef = getContext().actorSelection(remotePath).anchor();
-    	
-    	Cancellable cancellable = getContext().system().scheduler().scheduleOnce(
-    			 (FiniteDuration) Duration.create(time, TimeUnit.MILLISECONDS), managerRef, new TimeoutMessage(nodeID, node),
-    			 getContext().system().dispatcher(), managerRef);
-    	//System.out.println("HEARTBEAT TIMER CREATED FOR NODE "+nodeID);
-    	TimerNode tn = new TimerNode(node, nodeID, cancellable);
-    	timerNodes.put(nodeID, tn);
+    	if(manager) {
+    		try {
+    			timerNodes.get(nodeID).cancellable.cancel();
+    			timerNodes.remove(nodeID);
+    		}catch(Exception ex) {}
+	    	//ActorRef managerRef = getContext().actorSelection(remotePath).anchor();
+	    	//System.out.println("TRIGGER CANCELLABLE "+nodeID);
+	    	System.out.println("CANCELLABLE "+nodeID+" TIME "+time);
+	    	
+	    	Cancellable cancellable = getContext().system().scheduler().scheduleOnce(
+	    			 (FiniteDuration) Duration.create(time, TimeUnit.MILLISECONDS), getSelf(),
+	    			 new TimeoutMessage(nodeID, node),
+	//    			 new Runnable() {
+	//     			    @Override
+	//     			    public void run() {
+	//     			    	if(manager) {
+	//     			    		timerNodes.get(nodeID).cancellable.cancel();
+	//     				    	timerNodes.remove(nodeID);
+	//     			    		System.out.println("TIMEOUT "+nodeID);
+	//     			    		System.out.println("TIMEOUT "+nodeID);
+	//     			    		System.out.println("TIMEOUT "+nodeID);
+	//     			    		System.out.println("TIMEOUT "+nodeID);
+	//     			    		System.out.println("TIMEOUT "+nodeID);
+	//     			    		System.out.println("TIMEOUT "+nodeID);
+	//     			    		System.out.println("TIMEOUT "+nodeID);
+	//     			    		System.out.println("TIMEOUT "+nodeID);
+	//     				    	Map<Integer, ActorRef> newView = views.get(viewID);
+	//     				    	newView.remove(nodeID);
+	//
+	//     				    	multicast(new ViewChange(viewID+1,newView,null,-1),newView);
+	//     			    	}
+	//     			    }
+	//     			},
+	    			 getContext().system().dispatcher(), getSelf());
+	    	System.out.println("HEARTBEAT TIMER CREATED FOR NODE "+nodeID);
+	    	TimerNode tn = new TimerNode(node, nodeID, cancellable);
+	    	timerNodes.put(nodeID, tn);
+    	}
     }
     
     private void restartTimerNodes(int nodeID, ActorRef node, double time) {
@@ -341,11 +374,12 @@ public class NodeApp {
     	try {
 	    	/*for(Entry<Integer, ActorRef> entry : views.get(viewID).entrySet()) {
 	    		if(entry.getValue().equals(getSender())) {
-	    			restartTimerNodes(entry.getKey(), entry.getValue(), hearttimer);
+	    			restartTimerNodes(entry.getKey(), entry.getValue(), timeout);
 	    		}
 	    	}*/
     		ActorRef a = views.get(viewID).get(message.senderID);
-    		restartTimerNodes(message.senderID, a, hearttimer);
+    		//restartTimerNodes(message.senderID, a, hearttimer);
+    		restartTimerNodes(message.senderID, a, timeout);
     	}catch(Exception ex) {}
     	
     }
@@ -487,6 +521,12 @@ public class NodeApp {
     	if(manager) {
     		timerNodes.get(message.nodeID).cancellable.cancel();
 	    	timerNodes.remove(message.nodeID);
+    		System.out.println("TIMEOUT "+message.nodeID);
+    		System.out.println("TIMEOUT "+message.nodeID);
+    		System.out.println("TIMEOUT "+message.nodeID);
+    		System.out.println("TIMEOUT "+message.nodeID);
+    		System.out.println("TIMEOUT "+message.nodeID);
+    		System.out.println("TIMEOUT "+message.nodeID);
     		System.out.println("TIMEOUT "+message.nodeID);
 	    	Map<Integer, ActorRef> newView = views.get(viewID);
 	    	newView.remove(message.nodeID);
