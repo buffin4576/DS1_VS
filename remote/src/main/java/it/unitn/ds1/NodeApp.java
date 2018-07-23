@@ -217,6 +217,13 @@ public class NodeApp {
     }
     
     private void onViewChange(ViewChange message) {
+
+//    	if(!manager)
+//    	{
+//    		System.exit(0);
+//    	}
+    	
+    		
     	if(active) {
     		System.out.println("VIEW CHANGE "+message.viewID);
 	    	//FLUSH
@@ -247,11 +254,18 @@ public class NodeApp {
     		
     	}
     }
-    
+    boolean created = false;
     private void multicast(Serializable message, Map<Integer, ActorRef> nodes){
+    	
+    	
     	for(ActorRef process :nodes.values()) {
     		try {
-    		process.tell(message, getSelf());}
+    			process.tell(message, getSelf());
+//    			if(!manager)
+//    		    	{
+//    		    		System.exit(0);
+//    		    	}
+    		}
     		catch(Exception ex) {}
     	}
     }
@@ -328,6 +342,11 @@ public class NodeApp {
     
     private void onReceiveMessage(DataMessage message) {
     	delay(maxDelay);
+//    	if(!manager)
+//        	{
+//        		System.exit(0);
+//        	}
+    	
     	if(active) {
 	    	if(message.viewID==this.viewID) {
 	    		if(deleteMessages.containsKey(message.senderID)) {
@@ -568,6 +587,7 @@ public class NodeApp {
 		
 		return uniqueIDs;
 	}
+	
   }
   
   public static void main(String[] args) {
