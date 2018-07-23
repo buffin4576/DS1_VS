@@ -1,4 +1,7 @@
 package it.unitn.ds1;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.PrintStream;
 import java.io.Serializable;
 import java.util.concurrent.TimeUnit;
 import java.util.List;
@@ -166,6 +169,9 @@ public class NodeApp {
     private Map<Integer, DataMessage> deleteMessages = new HashMap<>();
     private int messageCounter = 0;
     private int messageTimer = 700;
+    
+    private FileOutputStream fos;
+    private PrintStream ps;
 
     /* -- Actor constructor --------------------------------------------------- */
     public Node(int id, String remotePath) {
@@ -184,10 +190,20 @@ public class NodeApp {
     	  if(this.id==0) {
     		  setManager(true);
     		  this.active = true;
+    		  
+    		  try {
+				fos = new FileOutputStream("output_node_"+id+".txt");
+				ps = new PrintStream(fos);
+			} catch (FileNotFoundException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+    		  
     		  Map<Integer, ActorRef> initNode = new HashMap<>();
     		  initNode.put(this.id, getSelf());
     		  views.put(viewID, initNode);
     		  System.out.println("VIEW_ID "+this.viewID+" COUNT VIEWS "+views.size());
+    		  
     		  setTimerData();
     	  }
     	  else {
@@ -234,6 +250,9 @@ public class NodeApp {
 	    		
 	    		//deliver and delete
 	    		//PRINT deliver
+	    		try {
+	    		ps.println(id+" deliver multicast "+ dm.id+ " from "+dm.senderID+" within "+ dm.viewID);
+	    		}catch(Exception ex) {}
 	    		System.out.println(id+" deliver multicast "+ dm.id+ " from "+dm.senderID+" within "+ dm.viewID);
 	    		deleteMessages.put(dm.id, dm);
 	    		receivedMessages.remove(dm.id);
@@ -275,6 +294,19 @@ public class NodeApp {
       //this.viewID = message.viewID;
       //this.views.put(this.viewID, message.nodes);
       //this.active = true;
+      try {
+			fos = new FileOutputStream("output_node_"+id+".txt");
+			ps = new PrintStream(fos);
+			String partecipants = "";
+			for(Entry<Integer, ActorRef> node : message.nodes.entrySet()) {
+				partecipants = ","+node.getKey();
+			}
+			partecipants = partecipants.substring(1);
+			ps.println(id + " install view "+ this.viewID +" 0,"+ partecipants);
+		} catch (FileNotFoundException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
       System.out.println("Node " + id + " joined");
       //start heartbeat from node to manager
       setTimerHeartbeat(hearttimer);
@@ -357,8 +389,10 @@ public class NodeApp {
 			    			if(message.id > older.id ){
 			    				receivedMessages.remove(message.senderID);
 			    				//PRINT delivery
-	
-			    	    		System.out.println(id+" deliver multicast "+ older.id+ " from "+older.senderID+" within "+ older.viewID);
+			    				try {
+			    				ps.println(id+" deliver multicast "+ older.id+ " from "+older.senderID+" within "+ older.viewID);
+			    				}catch(Exception ex) {}
+			    				System.out.println(id+" deliver multicast "+ older.id+ " from "+older.senderID+" within "+ older.viewID);
 			        		}
 			        	}
 			        	receivedMessages.put(message.senderID, message);
@@ -370,8 +404,10 @@ public class NodeApp {
 		    			if(message.id > older.id ){
 		    				receivedMessages.remove(message.senderID);
 		    				//PRINT delivery
-	
-		    	    		System.out.println(id+" deliver multicast "+ older.id+ " from "+older.senderID+" within "+ older.viewID);
+		    				try {
+		    				ps.println(id+" deliver multicast "+ older.id+ " from "+older.senderID+" within "+ older.viewID);
+		    				}catch(Exception ex) {}
+		    				System.out.println(id+" deliver multicast "+ older.id+ " from "+older.senderID+" within "+ older.viewID);
 		        		}
 		        	}
 		        	receivedMessages.put(message.senderID, message);
@@ -384,6 +420,9 @@ public class NodeApp {
 	    			if(message.id > older.id ){
 	    				receivedMessages.remove(message.senderID);
 	    				//PRINT delivery
+	    				try {
+	    				ps.println(id+" deliver multicast "+ older.id+ " from "+older.senderID+" within "+ older.viewID);
+	    				}catch(Exception ex) {}
 	    				System.out.println(id+" deliver multicast "+ older.id+ " from "+older.senderID+" within "+ older.viewID);
 	        		}
 	        	}
@@ -427,7 +466,15 @@ public class NodeApp {
 				
 				if(inhibit==0) {// solo il nuovo processo ha inhibit = 0 gli altri no
 					this.viewID = message.flushID;
-					System.out.println(id+" install view "+ this.viewID + " listprocesses");
+					String partecipants = "";
+					for(Entry<Integer, ActorRef> node : message.view.entrySet()) {
+						partecipants+=","+node.getKey();
+					}
+					partecipants = partecipants.substring(1);
+					try {
+					ps.println(id+" install view "+ this.viewID + " "+partecipants);
+					}catch(Exception ex) {}
+					System.out.println(id+" install view "+ this.viewID + " "+partecipants);
 					this.active = true;
 				}
 				else {
@@ -435,7 +482,15 @@ public class NodeApp {
 		    			this.inhibit--;
 		    			this.viewID++;
 		    			//check install view?
-			    		System.out.println(id+" install view "+ this.viewID + " listprocesses");
+		    			String partecipants = "";
+						for(Entry<Integer, ActorRef> node : message.view.entrySet()) {
+							partecipants+=","+node.getKey();
+						}
+						partecipants = partecipants.substring(1);
+						try {
+						ps.println(id+" install view "+ this.viewID + " "+partecipants);
+						}catch(Exception ex) {}
+						System.out.println(id+" install view "+ this.viewID + " "+partecipants);
 		    		}
 		    		for(Entry<Integer, DataMessage> entry : receivedMessages.entrySet()) {
 		    			if(entry.getValue().viewID<this.viewID) {
@@ -472,6 +527,9 @@ public class NodeApp {
     			    		//System.out.println(id+" VIEW: "+viewID);
 	    			    	messageCounter++;
 	    			    	multicast(new DataMessage(messageCounter, id, viewID),views.get(viewID));
+	    			    	try {
+	    			    	ps.println(id+" send multicast "+ messageCounter +" within "+ viewID);
+	    			    	}catch(Exception ex) {}
 	    			    	System.out.println(id+" send multicast "+ messageCounter +" within "+ viewID);
     			    	}
     			    }
